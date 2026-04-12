@@ -1,0 +1,40 @@
+server:
+  host: 127.0.0.1
+  port: 8080
+  read_timeout: 5s
+  write_timeout: 30s
+  shutdown_timeout: 5s
+
+gateway:
+  default_provider: mock
+  default_model: mock-gpt
+  request_timeout: 30s
+  max_retries: 1
+  retry_backoff: 200ms
+  max_backoff: 2s
+  queue_size: 64
+  workers_per_provider: 2
+  drop_on_queue_full: false
+  debug_buffer_size: 20
+
+providers:
+  - name: mock
+    type: mock
+    enabled: true
+    mock_response: "hello from mock provider"
+
+plugins:
+  logging_enabled: true
+  governance_enabled: false
+
+governance:
+  enabled: false
+  virtual_keys: []
+
+tools:
+  enabled: false
+  allowed_tools: []
+
+observability:
+  log_level: info
+  keep_recent_requests: 20
