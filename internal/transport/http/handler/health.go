@@ -19,8 +19,7 @@ func Health(ctx *fasthttp.RequestCtx) {
 	// 校验请求方法，只允许 GET
 	if !ctx.IsGet() {
 		ctx.Response.Header.Set("Allow", fasthttp.MethodGet)
-		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
-		ctx.SetBodyString("方法不被允许")
+		WriteError(ctx, fasthttp.StatusMethodNotAllowed, "方法不被允许")
 		return
 	}
 
@@ -35,17 +34,9 @@ func Health(ctx *fasthttp.RequestCtx) {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
-		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
-		ctx.SetBodyString("编码健康检查响应失败")
+		WriteError(ctx, fasthttp.StatusInternalServerError, "编码健康检查响应失败")
 		return
 	}
 
 	ctx.SetBody(body)
-}
-
-// NotFound 返回未命中路由的错误响应
-func NotFound(ctx *fasthttp.RequestCtx) {
-	// 返回统一的未找到响应
-	ctx.SetStatusCode(fasthttp.StatusNotFound)
-	ctx.SetBodyString("请求路径不存在")
 }

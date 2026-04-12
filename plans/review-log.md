@@ -44,6 +44,7 @@
 - 要求将 Day 1 当前使用的 `net/http` 改为 `fasthttp` 框架。
 - 建议将 HTTP handler 独立到 `internal/transport/http/handler/` 目录，而不是继续使用 `handlers_xxx.go` 平铺命名。
 - 要求 README 避免使用“当前实现”“当前阶段”等阶段性措辞，改为长期有效的项目介绍口径。
+- 指出 `internal/transport/http/handler/health.go` 中的 `NotFound` 职责不合适，要求迁移到更通用的位置。
 
 ### 是否要求修改
 
@@ -57,13 +58,41 @@
 - 已将 Day 1 的 health handler 和测试迁移到 `internal/transport/http/handler/` 目录。
 - 已同步更新 README 与实现蓝图中的 transport 说明。
 - 已将 README 改写为稳定的项目介绍，不再使用阶段性措辞。
+- 已将 `NotFound` 从 `health.go` 迁移到 `handler/common.go`，使健康检查与通用错误响应职责分离。
 
 ### 对后续计划的影响
 
 - 需要调整 Day 2、Day 4、Day 10、Day 12 以及实现蓝图中与 handler 文件落点有关的计划表述。
 - 需要在后续文档撰写中统一避免时间敏感的阶段性表达。
+- 需要在后续 handler 设计中继续保持“资源 handler”和“通用响应辅助”分离。
 
 ### 已更新的计划文档
 
 - `plans/daily-plan.md`
 - `plans/implementation-blueprint.md`
+
+## Day 2
+
+### 审阅意见
+
+- 指出 `internal/transport/http/openai_api.go` 与 `internal/transport/http/handler/common.go` 存在重复定义，要求统一。
+- 建议不要新增 `response/error.go`，统一错误响应直接保留在 `handler/common.go`。
+
+### 是否要求修改
+
+- 是
+
+### 已完成修改
+
+- 已删除 `internal/transport/http/openai_api.go` 中重复的错误结构与输出逻辑。
+- 已将统一错误结构与 `WriteError` 收敛回 `internal/transport/http/handler/common.go`。
+- 已让 `middleware` 与 `handler` 统一复用 `handler.WriteError`。
+
+### 对后续计划的影响
+
+- 需要在后续 HTTP 代码中继续保持“协议结构定义”和“通用响应输出”分离。
+- 需要在当前项目规模下避免为单一职责过早增加一层目录。
+
+### 已更新的计划文档
+
+- `plans/review-log.md`

@@ -1,6 +1,9 @@
 package http
 
-import "github.com/valyala/fasthttp"
+import (
+	"github.com/Becks723/mind-gateway/internal/observability"
+	"github.com/valyala/fasthttp"
+)
 
 // Server 表示 HTTP 传输层服务封装
 type Server struct {
@@ -8,9 +11,9 @@ type Server struct {
 }
 
 // NewServer 创建 HTTP 传输层服务
-func NewServer() *Server {
+func NewServer(logger *observability.RequestLogger) *Server {
 	return &Server{
-		handler: NewRouter(),
+		handler: NewRouter(logger),
 	}
 }
 

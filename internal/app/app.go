@@ -5,46 +5,58 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
+	"github.com/Becks723/mind-gateway/internal/config"
+	"github.com/Becks723/mind-gateway/internal/observability"
 	httptransport "github.com/Becks723/mind-gateway/internal/transport/http"
 	"github.com/valyala/fasthttp"
 )
 
-const (
-	defaultHost            = "127.0.0.1"
-	defaultPort            = 8080
-	defaultShutdownTimeout = 5 * time.Second
-)
+const defaultConfigPath = "testdata/config.dev.yaml"
 
 // App 表示应用运行时对象
 type App struct {
-	server          *fasthttp.Server // server 表示底层 fasthttp 服务实例
-	addr            string           // addr 表示服务监听地址
-	listener        net.Listener     // listener 表示服务监听器
-	shutdownTimeout time.Duration    // shutdownTimeout 表示优雅关闭等待时长
+	config          *config.Config               // config 表示应用配置
+	logger          *observability.RequestLogger // logger 表示结构化日志记录器
+	server          *fasthttp.Server             // server 表示底层 fasthttp 服务实例
+	addr            string                       // addr 表示服务监听地址
+	listener        net.Listener                 // listener 表示服务监听器
+	shutdownTimeout time.Duration                // shutdownTimeout 表示优雅关闭等待时长
 }
 
 // New 创建应用实例并装配最小 HTTP 服务
 func New() (*App, error) {
+	// 加载应用配置
+	cfg, err := config.Load(resolveConfigPath())
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建结构化日志记录器
+	logger := observability.NewRequestLogger(cfg.Observability.LogLevel)
+
 	// 创建 HTTP 路由并计算监听地址
-	handler := httptransport.NewRouter()
-	addr := net.JoinHostPort(defaultHost, fmt.Sprintf("%d", defaultPort))
+	handler := httptransport.NewRouter(logger)
+	addr := net.JoinHostPort(cfg.Server.Host, fmt.Sprintf("%d", cfg.Server.Port))
 
 	// 构造 fasthttp 服务实例
 	server := &fasthttp.Server{
 		Handler:            handler,
 		Name:               "mind-gateway",
-		ReadTimeout:        5 * time.Second,
-		WriteTimeout:       30 * time.Second,
+		ReadTimeout:        cfg.Server.ReadTimeout,
+		WriteTimeout:       cfg.Server.WriteTimeout,
 		MaxRequestBodySize: 4 * 1024 * 1024,
 	}
 
 	// 返回应用对象
 	return &App{
+		config:          cfg,
+		logger:          logger,
 		server:          server,
 		addr:            addr,
-		shutdownTimeout: defaultShutdownTimeout,
+		shutdownTimeout: cfg.Server.ShutdownTimeout,
 	}, nil
 }
 
@@ -58,6 +70,7 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 	a.listener = listener
+	a.logger.Info("启动 HTTP 服务", "addr", a.addr)
 
 	// 在后台启动 HTTP 服务
 	go func() {
@@ -75,6 +88,7 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	// 如果收到退出信号，则执行优雅关闭
 	case <-ctx.Done():
+		a.logger.Info("收到退出信号，准备关闭服务", "addr", a.addr)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
 		defer cancel()
 
@@ -98,4 +112,14 @@ func (a *App) Run(ctx context.Context) error {
 
 		return <-serverErr
 	}
+}
+
+// resolveConfigPath 解析应用配置文件路径
+func resolveConfigPath() string {
+	// 优先读取环境变量指定的配置路径
+	if path := os.Getenv("MIND_GATEWAY_CONFIG"); path != "" {
+		return path
+	}
+
+	return defaultConfigPath
 }
