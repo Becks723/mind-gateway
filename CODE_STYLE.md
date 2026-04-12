@@ -97,8 +97,8 @@ log.Printf("加载配置失败: %v", err)
 
 示例：
 
-- `internal/transport/http/handler`
-- `internal/provider/openai`
+- `transport/http/handler`
+- `provider/openai`
 - `request_log.go`
 - `health_test.go`
 
