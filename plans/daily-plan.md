@@ -32,6 +32,7 @@
 - `internal/transport/http/server.go`
 - `internal/transport/http/router.go`
 - `internal/transport/http/handler/health.go`
+- `internal/transport/http/handler/health_test.go`
 - `README.md`
 - `testdata/config.dev.yaml`
 
@@ -40,6 +41,7 @@
 - 新增不少于 8 个目录
 - `go run ./cmd/server` 可启动
 - `curl /healthz` 返回 `200`
+- 如果运行环境不允许监听端口，则至少用内存监听测试验证 `/healthz`
 - 传输层基于 `fasthttp` 而不是 `net/http`
 - README 至少包含启动方式和目录说明
 
@@ -58,14 +60,22 @@
 - 支持从本地文件读取配置
 - 接入结构化日志
 - 完成基于 `fasthttp` 的 router、middleware、错误响应格式
+- 将统一错误响应收敛到 `handler/common.go`
+- 保持资源 handler 与通用响应辅助分离
 
 当天我会实际创建或完善的文件：
 
 - `internal/config/config.go`
 - `internal/config/load.go`
+- `internal/config/load_test.go`
+- `internal/app/app.go`
+- `internal/transport/http/router.go`
+- `internal/transport/http/server.go`
 - `internal/transport/http/middleware.go`
 - `internal/transport/http/handler/`
-- `internal/transport/http/openai_api.go`
+- `internal/transport/http/handler/common.go`
+- `internal/transport/http/handler/health.go`
+- `internal/transport/http/middleware_test.go`
 - `internal/observability/request_log.go`
 
 量化验收：
