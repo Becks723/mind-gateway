@@ -2,12 +2,15 @@ package server
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Becks723/mind-gateway/core"
+	"github.com/Becks723/mind-gateway/core/schema"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/Becks723/mind-gateway/provider"
 	mockprovider "github.com/Becks723/mind-gateway/provider/mock"
+	openaiprovider "github.com/Becks723/mind-gateway/provider/openai"
 )
 
 // Bootstrap 加载配置并构建 HTTP 服务
@@ -22,7 +25,7 @@ func Bootstrap(configPath string) (*Server, error) {
 	logger := frameworklogging.NewLogger(cfg.Observability.LogLevel)
 
 	// 构建 Provider 注册表
-	registry, err := buildProviderRegistry(cfg)
+	registry, err := buildProviderRegistry(cfg, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -34,23 +37,46 @@ func Bootstrap(configPath string) (*Server, error) {
 }
 
 // buildProviderRegistry 根据配置构建 Provider 注册表
-func buildProviderRegistry(cfg *frameworkconfig.Config) (*provider.Registry, error) {
+func buildProviderRegistry(cfg *frameworkconfig.Config, logger *frameworklogging.Logger) (*provider.Registry, error) {
 	registry := provider.NewRegistry()
 
 	for _, providerCfg := range cfg.Providers {
+		// 跳过未启用的 Provider
 		if !providerCfg.Enabled {
 			continue
 		}
 
-		switch providerCfg.Type {
-		case "mock":
-			if err := registry.Register(mockprovider.New(providerCfg.Name, providerCfg.MockResponse)); err != nil {
-				return nil, err
-			}
-		default:
-			return nil, fmt.Errorf("暂不支持的 provider 类型: %s", providerCfg.Type)
+		// 根据配置创建具体 Provider
+		instance, err := buildProvider(providerCfg, cfg.Gateway.RequestTimeout)
+		if err != nil {
+			return nil, err
 		}
+
+		// 注册 Provider 并输出日志
+		if err := registry.Register(instance); err != nil {
+			return nil, err
+		}
+		logger.Info("注册 provider 成功", "provider", providerCfg.Name, "type", providerCfg.Type)
 	}
 
 	return registry, nil
+}
+
+// buildProvider 根据配置创建具体 Provider
+func buildProvider(providerCfg frameworkconfig.ProviderConfig, requestTimeout time.Duration) (schema.Provider, error) {
+	// 按类型分发到具体的 Provider 构造函数
+	switch providerCfg.Type {
+	case "mock":
+		return mockprovider.New(providerCfg.Name, providerCfg.MockResponse), nil
+	case "openai":
+		return openaiprovider.NewProvider(
+			providerCfg.Name,
+			providerCfg.BaseURL,
+			providerCfg.APIKey,
+			providerCfg.ModelMap,
+			requestTimeout,
+		), nil
+	default:
+		return nil, fmt.Errorf("暂不支持的 provider 类型: %s", providerCfg.Type)
+	}
 }

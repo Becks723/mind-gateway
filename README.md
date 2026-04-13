@@ -98,3 +98,25 @@ testdata/config.dev.yaml
 - 日志等级
 - 调试缓冲区大小
 
+## OpenAI Provider 配置示例
+
+```yaml
+gateway:
+  default_provider: openai
+  default_model: gpt-4o-mini
+
+providers:
+  - name: openai
+    type: openai
+    enabled: true
+    base_url: https://api.openai.com
+    api_key: ${OPENAI_API_KEY}
+    model_map:
+      gpt-4o-mini: gpt-4o-mini
+```
+
+启动时指定配置文件：
+
+```bash
+MIND_GATEWAY_CONFIG=testdata/config.openai.yaml go run ./cmd/mind_http
+```
