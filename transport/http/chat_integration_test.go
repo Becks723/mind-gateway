@@ -25,7 +25,7 @@ func TestChatCompletion(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry, frameworklogging.NewLogger("error"))
+	}, registry, frameworklogging.NewLogger("error"), nil)
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 
@@ -74,7 +74,7 @@ func TestChatCompletionWithInvalidMessages(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry, frameworklogging.NewLogger("error"))
+	}, registry, frameworklogging.NewLogger("error"), nil)
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 
