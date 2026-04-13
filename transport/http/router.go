@@ -1,11 +1,10 @@
 package http
 
 import (
-	"github.com/valyala/fasthttp"
-
 	"github.com/Becks723/mind-gateway/core"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/Becks723/mind-gateway/transport/http/handler"
+	"github.com/valyala/fasthttp"
 )
 
 // NewRouter 创建并注册 HTTP 路由

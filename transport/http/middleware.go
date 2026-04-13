@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/valyala/fasthttp"
-
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/Becks723/mind-gateway/transport/http/handler"
+	"github.com/google/uuid"
+	"github.com/valyala/fasthttp"
 )
 
 const requestIDKey = "request_id"

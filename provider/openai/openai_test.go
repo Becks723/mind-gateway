@@ -5,10 +5,9 @@ import (
 	"net"
 	"testing"
 
+	"github.com/Becks723/mind-gateway/core/schema"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
-
-	"github.com/Becks723/mind-gateway/core/schema"
 )
 
 // TestProviderChat 验证 OpenAI Provider 可以完成一次聊天请求

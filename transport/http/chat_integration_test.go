@@ -6,14 +6,13 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttp/fasthttputil"
-
 	"github.com/Becks723/mind-gateway/core"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/Becks723/mind-gateway/provider"
 	mockprovider "github.com/Becks723/mind-gateway/provider/mock"
+	"github.com/valyala/fasthttp"
+	"github.com/valyala/fasthttp/fasthttputil"
 )
 
 // TestChatCompletion 验证聊天补全接口可以返回 OpenAI-compatible 响应
@@ -26,7 +25,7 @@ func TestChatCompletion(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry)
+	}, registry, frameworklogging.NewLogger("error"))
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 
@@ -75,7 +74,7 @@ func TestChatCompletionWithInvalidMessages(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry)
+	}, registry, frameworklogging.NewLogger("error"))
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 

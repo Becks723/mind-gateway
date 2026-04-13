@@ -7,12 +7,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/valyala/fasthttp"
-
 	"github.com/Becks723/mind-gateway/core"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	transporthttp "github.com/Becks723/mind-gateway/transport/http"
+	"github.com/valyala/fasthttp"
 )
 
 // Server 表示 HTTP 传输层服务
@@ -73,27 +72,47 @@ func (s *Server) Start(ctx context.Context) error {
 	case err := <-serverErr:
 		return err
 	case <-ctx.Done():
-		s.Logger.Info("收到退出信号，准备关闭服务", "addr", s.Addr)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
-		defer cancel()
+		return s.shutdown(serverErr)
+	}
+}
 
-		_ = s.listener.Close()
+// shutdown 执行 HTTP 服务和网关的优雅关闭
+func (s *Server) shutdown(serverErr <-chan error) error {
+	// 创建优雅关闭上下文
+	s.Logger.Info("收到退出信号，准备关闭服务", "addr", s.Addr)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
+	defer cancel()
 
-		shutdownErr := make(chan error, 1)
-		go func() {
-			shutdownErr <- s.HTTPServer.Shutdown()
-		}()
+	// 先停止监听新的连接
+	_ = s.listener.Close()
 
-		select {
-		case err := <-shutdownErr:
-			if err != nil {
-				return err
-			}
-		case <-shutdownCtx.Done():
-			return shutdownCtx.Err()
-		}
+	// 等待 HTTP 服务完成关闭
+	if err := s.shutdownHTTPServer(shutdownCtx); err != nil {
+		return err
+	}
 
-		return <-serverErr
+	// 关闭网关内部的队列和工作协程
+	if err := s.Gateway.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+
+	return <-serverErr
+}
+
+// shutdownHTTPServer 优雅关闭底层 HTTP 服务
+func (s *Server) shutdownHTTPServer(ctx context.Context) error {
+	// 在独立协程中执行 fasthttp 的关闭逻辑
+	shutdownErr := make(chan error, 1)
+	go func() {
+		shutdownErr <- s.HTTPServer.Shutdown()
+	}()
+
+	// 等待关闭完成或超时
+	select {
+	case err := <-shutdownErr:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

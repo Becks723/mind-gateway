@@ -31,7 +31,7 @@ func Bootstrap(configPath string) (*Server, error) {
 	}
 
 	// 创建网关核心对象
-	gateway := core.NewGateway(cfg.Gateway, registry)
+	gateway := core.NewGateway(cfg.Gateway, registry, logger)
 
 	return New(cfg, logger, gateway), nil
 }

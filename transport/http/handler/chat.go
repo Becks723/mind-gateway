@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/valyala/fasthttp"
-
 	"github.com/Becks723/mind-gateway/core/schema"
 	"github.com/Becks723/mind-gateway/provider/openai"
+	"github.com/valyala/fasthttp"
 )
 
 // ChatGateway 定义聊天请求所需的最小网关接口

@@ -5,10 +5,9 @@ import (
 	"net/http"
 	"testing"
 
+	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttputil"
-
-	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 )
 
 // TestRequestIDMiddleware 验证中间件会返回请求 ID 响应头
