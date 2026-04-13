@@ -11,6 +11,8 @@ import (
 	"github.com/Becks723/mind-gateway/core/schema"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
+	plugincore "github.com/Becks723/mind-gateway/plugin"
+	logplugin "github.com/Becks723/mind-gateway/plugin/logging"
 	"github.com/Becks723/mind-gateway/provider"
 	mockprovider "github.com/Becks723/mind-gateway/provider/mock"
 )
@@ -107,7 +109,7 @@ func TestGatewayHandleChat(t *testing.T) {
 		DefaultModel:       "mock-gpt",
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil)
 
 	// 构造聊天请求并执行
 	resp, err := gateway.HandleChat(context.Background(), &schema.Request{
@@ -140,7 +142,7 @@ func TestGatewayHandleChatWithEmptyMessages(t *testing.T) {
 		DefaultModel:       "mock-gpt",
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, provider.NewRegistry(), frameworklogging.NewLogger("error"), nil)
+	}, provider.NewRegistry(), frameworklogging.NewLogger("error"), nil, nil)
 
 	// 执行空消息请求并校验错误
 	if _, err := gateway.HandleChat(context.Background(), &schema.Request{
@@ -164,7 +166,7 @@ func TestGatewayConcurrentHandleChat(t *testing.T) {
 		RequestTimeout:     3 * time.Second,
 		QueueSize:          64,
 		WorkersPerProvider: 4,
-	}, registry, frameworklogging.NewLogger("error"), nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil)
 
 	// 并发发起 20 个请求
 	var wg sync.WaitGroup
@@ -216,7 +218,7 @@ func TestGatewayShutdown(t *testing.T) {
 		DefaultModel:       "mock-gpt",
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil)
 
 	// 执行关闭动作并校验结果
 	if err := gateway.Shutdown(context.Background()); err != nil {
@@ -240,7 +242,7 @@ func TestGatewayRetry(t *testing.T) {
 		MaxBackoff:         10 * time.Millisecond,
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil)
 
 	// 执行请求并校验最终成功
 	resp, err := gateway.HandleChat(context.Background(), &schema.Request{
@@ -277,7 +279,7 @@ func TestGatewayFallback(t *testing.T) {
 		MaxRetries:         0,
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), []frameworkconfig.ProviderConfig{
+	}, registry, frameworklogging.NewLogger("error"), nil, []frameworkconfig.ProviderConfig{
 		{
 			Name:      "primary",
 			Type:      "mock",
@@ -329,7 +331,7 @@ func TestGatewayNonRetryableError(t *testing.T) {
 		MaxRetries:         2,
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), []frameworkconfig.ProviderConfig{
+	}, registry, frameworklogging.NewLogger("error"), nil, []frameworkconfig.ProviderConfig{
 		{
 			Name:      "fatal",
 			Type:      "mock",
@@ -353,5 +355,39 @@ func TestGatewayNonRetryableError(t *testing.T) {
 	}
 	if !IsNonRetryable(err) {
 		t.Fatalf("期望错误为不可重试错误，实际得到 %v", err)
+	}
+}
+
+// TestGatewayWithLoggingPlugin 验证网关可以接入日志插件
+func TestGatewayWithLoggingPlugin(t *testing.T) {
+	// 创建注册表、日志插件和网关
+	registry := provider.NewRegistry()
+	if err := registry.Register(mockprovider.New("mock", "插件执行成功")); err != nil {
+		t.Fatalf("注册 mock Provider 失败: %v", err)
+	}
+	logger := frameworklogging.NewLogger("error")
+	pipeline := plugincore.NewPipeline(logplugin.NewPlugin(logger))
+	gateway := NewGateway(frameworkconfig.GatewayConfig{
+		DefaultProvider:    "mock",
+		DefaultModel:       "mock-gpt",
+		QueueSize:          8,
+		WorkersPerProvider: 1,
+	}, registry, logger, pipeline, nil)
+
+	// 执行请求并校验结果
+	resp, err := gateway.HandleChat(context.Background(), &schema.Request{
+		RequestID: "plugin-1",
+		Messages: []schema.Message{
+			{
+				Role:    "user",
+				Content: "你好",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("执行带日志插件的请求失败: %v", err)
+	}
+	if resp == nil || resp.OutputText != "插件执行成功" {
+		t.Fatalf("期望响应输出为 插件执行成功，实际得到 %#v", resp)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/Becks723/mind-gateway/core/schema"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
+	"github.com/Becks723/mind-gateway/plugin"
 	"github.com/Becks723/mind-gateway/provider"
 )
 
@@ -17,22 +18,28 @@ type Gateway struct {
 	config            frameworkconfig.GatewayConfig // config 表示网关核心配置
 	registry          *provider.Registry            // registry 表示 Provider 注册表
 	logger            *frameworklogging.Logger      // logger 表示网关日志记录器
+	pluginPipeline    *plugin.Pipeline              // pluginPipeline 表示插件执行管线
 	queues            map[string]*ProviderQueue     // queues 表示按 Provider 组织的请求队列
 	providerFallbacks map[string][]string           // providerFallbacks 表示每个 Provider 对应的降级链
 	mu                sync.RWMutex                  // mu 表示队列读写锁
 }
 
 // NewGateway 创建新的网关核心对象
-func NewGateway(cfg frameworkconfig.GatewayConfig, registry *provider.Registry, logger *frameworklogging.Logger, providerConfigs []frameworkconfig.ProviderConfig) *Gateway {
+func NewGateway(cfg frameworkconfig.GatewayConfig, registry *provider.Registry, logger *frameworklogging.Logger, pluginPipeline *plugin.Pipeline, providerConfigs []frameworkconfig.ProviderConfig) *Gateway {
 	// 创建网关对象并初始化队列
 	finalLogger := logger
 	if finalLogger == nil {
 		finalLogger = frameworklogging.NewLogger("error")
 	}
+	finalPluginPipeline := pluginPipeline
+	if finalPluginPipeline == nil {
+		finalPluginPipeline = plugin.NewPipeline()
+	}
 	gateway := &Gateway{
 		config:            cfg,
 		registry:          registry,
 		logger:            finalLogger,
+		pluginPipeline:    finalPluginPipeline,
 		queues:            make(map[string]*ProviderQueue),
 		providerFallbacks: buildProviderFallbacks(providerConfigs),
 	}
@@ -69,7 +76,7 @@ func (g *Gateway) HandleChat(ctx context.Context, req *schema.Request) (*schema.
 		attemptReq.Provider = providerName
 		attemptReq.FallbackIndex = fallbackIndex
 
-		resp, err := g.handleProviderAttempt(ctx, attemptReq)
+		resp, err := g.handleRequestWithPlugins(ctx, attemptReq)
 		if err == nil {
 			return resp, nil
 		}
@@ -84,6 +91,24 @@ func (g *Gateway) HandleChat(ctx context.Context, req *schema.Request) (*schema.
 	}
 
 	return nil, fmt.Errorf("请求执行失败")
+}
+
+// handleRequestWithPlugins 在调度请求前后执行插件钩子
+func (g *Gateway) handleRequestWithPlugins(ctx context.Context, req *schema.Request) (*schema.Response, error) {
+	// 执行前置插件钩子
+	finalReq, shortCircuit, executedCount, err := g.runPreHooks(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if shortCircuit != nil && shortCircuit.ShortCircuit {
+		return shortCircuit.Response, nil
+	}
+
+	// 执行实际的 provider 调度
+	resp, runErr := g.handleProviderAttempt(ctx, finalReq)
+
+	// 执行后置插件钩子
+	return g.runPostHooks(ctx, finalReq, resp, runErr, executedCount)
 }
 
 // bootstrapQueues 为已注册的 Provider 初始化队列和 worker
@@ -171,6 +196,16 @@ func (g *Gateway) handleProviderAttempt(ctx context.Context, req *schema.Request
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// runPreHooks 执行插件前置钩子
+func (g *Gateway) runPreHooks(ctx context.Context, req *schema.Request) (*schema.Request, *schema.PreHookResult, int, error) {
+	return g.pluginPipeline.RunPreHooks(ctx, req)
+}
+
+// runPostHooks 执行插件后置钩子
+func (g *Gateway) runPostHooks(ctx context.Context, req *schema.Request, resp *schema.Response, runErr error, executedCount int) (*schema.Response, error) {
+	return g.pluginPipeline.RunPostHooks(ctx, req, resp, runErr, executedCount)
 }
 
 // executeWithRetry 在单个 Provider 内执行重试逻辑

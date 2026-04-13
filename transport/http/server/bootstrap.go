@@ -8,6 +8,8 @@ import (
 	"github.com/Becks723/mind-gateway/core/schema"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
+	"github.com/Becks723/mind-gateway/plugin"
+	logplugin "github.com/Becks723/mind-gateway/plugin/logging"
 	"github.com/Becks723/mind-gateway/provider"
 	mockprovider "github.com/Becks723/mind-gateway/provider/mock"
 	openaiprovider "github.com/Becks723/mind-gateway/provider/openai"
@@ -30,8 +32,11 @@ func Bootstrap(configPath string) (*Server, error) {
 		return nil, err
 	}
 
+	// 构建插件执行管线
+	pluginPipeline := buildPluginPipeline(cfg, logger)
+
 	// 创建网关核心对象
-	gateway := core.NewGateway(cfg.Gateway, registry, logger, cfg.Providers)
+	gateway := core.NewGateway(cfg.Gateway, registry, logger, pluginPipeline, cfg.Providers)
 
 	return New(cfg, logger, gateway), nil
 }
@@ -79,4 +84,15 @@ func buildProvider(providerCfg frameworkconfig.ProviderConfig, requestTimeout ti
 	default:
 		return nil, fmt.Errorf("暂不支持的 provider 类型: %s", providerCfg.Type)
 	}
+}
+
+// buildPluginPipeline 根据配置构建插件执行管线
+func buildPluginPipeline(cfg *frameworkconfig.Config, logger *frameworklogging.Logger) *plugin.Pipeline {
+	// 收集全部启用的插件
+	plugins := make([]schema.Plugin, 0, 1)
+	if cfg.Plugins.LoggingEnabled {
+		plugins = append(plugins, logplugin.NewPlugin(logger))
+	}
+
+	return plugin.NewPipeline(plugins...)
 }
