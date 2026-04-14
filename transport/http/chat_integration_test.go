@@ -2,13 +2,17 @@ package http
 
 import (
 	"bufio"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Becks723/mind-gateway/core"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
+	plugincore "github.com/Becks723/mind-gateway/plugin"
+	governanceplugin "github.com/Becks723/mind-gateway/plugin/governance"
 	"github.com/Becks723/mind-gateway/provider"
 	mockprovider "github.com/Becks723/mind-gateway/provider/mock"
 	"github.com/valyala/fasthttp"
@@ -111,4 +115,85 @@ func TestChatCompletionWithInvalidMessages(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("期望状态码为 400，实际得到 %d", resp.StatusCode)
 	}
+}
+
+// TestChatCompletionWithVirtualKeyQuota 验证治理插件会拦截超出额度的 virtual key
+func TestChatCompletionWithVirtualKeyQuota(t *testing.T) {
+	// 创建带治理插件的最小网关与测试路由
+	registry := provider.NewRegistry()
+	if err := registry.Register(mockprovider.New("mock", "你好，我是 mock")); err != nil {
+		t.Fatalf("注册 mock Provider 失败: %v", err)
+	}
+	governance := governanceplugin.NewPlugin(frameworklogging.NewLogger("error"), frameworkconfig.GovernanceConfig{
+		VirtualKeys: []frameworkconfig.VirtualKeyConfig{
+			{
+				Key:         "vk-limit",
+				Name:        "limited-user",
+				MaxRequests: 1,
+			},
+		},
+	})
+	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-gpt",
+	}, registry, frameworklogging.NewLogger("error"), plugincore.NewPipeline(governance), nil)
+	logger := frameworklogging.NewLogger("error")
+	router := NewRouter(logger, gateway)
+
+	ln := fasthttputil.NewInmemoryListener()
+	defer ln.Close()
+
+	server := &fasthttp.Server{
+		Handler: router,
+	}
+	go func() {
+		_ = server.Serve(ln)
+	}()
+
+	// 第一次请求应当成功
+	firstResponse := sendChatCompletionRequest(t, ln, `{"model":"mock-gpt","messages":[{"role":"user","content":"你好"}]}`, "Bearer vk-limit")
+	if firstResponse.StatusCode != http.StatusOK {
+		t.Fatalf("期望第一次请求状态码为 200，实际得到 %d", firstResponse.StatusCode)
+	}
+	_ = firstResponse.Body.Close()
+
+	// 第二次请求应当因为额度超限被拒绝
+	secondResponse := sendChatCompletionRequest(t, ln, `{"model":"mock-gpt","messages":[{"role":"user","content":"你好"}]}`, "Bearer vk-limit")
+	defer secondResponse.Body.Close()
+
+	if secondResponse.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("期望第二次请求状态码为 429，实际得到 %d", secondResponse.StatusCode)
+	}
+
+	body, err := io.ReadAll(secondResponse.Body)
+	if err != nil {
+		t.Fatalf("读取响应体失败: %v", err)
+	}
+	if !strings.Contains(string(body), "请求次数已超限") {
+		t.Fatalf("期望响应体包含额度超限提示，实际得到 %q", string(body))
+	}
+}
+
+// sendChatCompletionRequest 发送一次聊天补全测试请求
+func sendChatCompletionRequest(t *testing.T, ln *fasthttputil.InmemoryListener, body string, authorization string) *http.Response {
+	t.Helper()
+
+	conn, err := ln.Dial()
+	if err != nil {
+		t.Fatalf("创建测试连接失败: %v", err)
+	}
+
+	request := "POST /v1/chat/completions HTTP/1.1\r\nHost: example\r\nContent-Type: application/json\r\nAuthorization: " + authorization + "\r\nContent-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
+	if _, err := conn.Write([]byte(request)); err != nil {
+		_ = conn.Close()
+		t.Fatalf("发送测试请求失败: %v", err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		_ = conn.Close()
+		t.Fatalf("读取测试响应失败: %v", err)
+	}
+
+	return resp
 }

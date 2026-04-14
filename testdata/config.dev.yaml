@@ -29,7 +29,25 @@ plugins:
 
 governance:
   enabled: false
-  virtual_keys: []
+  virtual_keys:
+    - key: vk-dev-alpha
+      name: dev-alpha
+      max_requests: 100
+      max_input_tokens: 10000
+      max_output_tokens: 5000
+      allowed_providers:
+        - mock
+      allowed_models:
+        - mock-gpt
+    - key: vk-dev-beta
+      name: dev-beta
+      max_requests: 50
+      max_input_tokens: 5000
+      max_output_tokens: 2000
+      allowed_providers:
+        - mock
+      allowed_models:
+        - mock-gpt
 
 tools:
   enabled: false

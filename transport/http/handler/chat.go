@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/Becks723/mind-gateway/core/schema"
@@ -47,13 +48,14 @@ func ChatCompletion(gateway ChatGateway) fasthttp.RequestHandler {
 			Temperature: reqBody.Temperature,
 			MaxTokens:   reqBody.MaxTokens,
 			Metadata:    reqBody.Metadata,
+			VirtualKey:  virtualKeyFromContext(ctx),
 			StartedAt:   time.Now(),
 		}
 
 		// 调用网关核心执行链路
 		resp, err := gateway.HandleChat(ctx, internalReq)
 		if err != nil {
-			WriteError(ctx, fasthttp.StatusInternalServerError, err.Error())
+			WriteErrorFrom(ctx, err)
 			return
 		}
 
@@ -113,4 +115,24 @@ func requestIDFromContext(ctx *fasthttp.RequestCtx) string {
 	// 优先从中间件注入的上下文读取请求 ID
 	requestID, _ := ctx.UserValue("request_id").(string)
 	return requestID
+}
+
+// virtualKeyFromContext 从请求上下文中读取虚拟密钥
+func virtualKeyFromContext(ctx *fasthttp.RequestCtx) string {
+	// 优先读取自定义头中的虚拟密钥
+	virtualKey := strings.TrimSpace(string(ctx.Request.Header.Peek("X-Mind-Virtual-Key")))
+	if virtualKey != "" {
+		return virtualKey
+	}
+
+	// 兼容从 Authorization 的 Bearer 中读取虚拟密钥
+	authorization := strings.TrimSpace(string(ctx.Request.Header.Peek("Authorization")))
+	if authorization == "" {
+		return ""
+	}
+	if !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
+		return ""
+	}
+
+	return strings.TrimSpace(authorization[len("Bearer "):])
 }

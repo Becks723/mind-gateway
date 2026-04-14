@@ -32,7 +32,25 @@ plugins:
 
 governance:
   enabled: false
-  virtual_keys: []
+  virtual_keys:
+    - key: vk-openai-alpha
+      name: openai-alpha
+      max_requests: 100
+      max_input_tokens: 200000
+      max_output_tokens: 50000
+      allowed_providers:
+        - openai
+      allowed_models:
+        - gpt-4o-mini
+    - key: vk-openai-beta
+      name: openai-beta
+      max_requests: 20
+      max_input_tokens: 50000
+      max_output_tokens: 10000
+      allowed_providers:
+        - openai
+      allowed_models:
+        - gpt-4o-mini
 
 tools:
   enabled: false

@@ -9,6 +9,7 @@ import (
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/Becks723/mind-gateway/plugin"
+	governanceplugin "github.com/Becks723/mind-gateway/plugin/governance"
 	logplugin "github.com/Becks723/mind-gateway/plugin/logging"
 	"github.com/Becks723/mind-gateway/provider"
 	mockprovider "github.com/Becks723/mind-gateway/provider/mock"
@@ -89,9 +90,12 @@ func buildProvider(providerCfg frameworkconfig.ProviderConfig, requestTimeout ti
 // buildPluginPipeline 根据配置构建插件执行管线
 func buildPluginPipeline(cfg *frameworkconfig.Config, logger *frameworklogging.Logger) *plugin.Pipeline {
 	// 收集全部启用的插件
-	plugins := make([]schema.Plugin, 0, 1)
+	plugins := make([]schema.Plugin, 0, 2)
 	if cfg.Plugins.LoggingEnabled {
 		plugins = append(plugins, logplugin.NewPlugin(logger))
+	}
+	if cfg.Plugins.GovernanceEnabled && cfg.Governance.Enabled {
+		plugins = append(plugins, governanceplugin.NewPlugin(logger, cfg.Governance))
 	}
 
 	return plugin.NewPipeline(plugins...)
