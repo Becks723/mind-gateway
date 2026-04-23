@@ -102,3 +102,35 @@ func TestProviderChatStream(t *testing.T) {
 		t.Fatalf("期望输出 token 与 chunk 数一致，实际得到 usage=%#v chunkCount=%d", finalUsage, chunkCount)
 	}
 }
+
+// TestProviderChatWithToolCall 验证 mock Provider 可以返回工具调用
+func TestProviderChatWithToolCall(t *testing.T) {
+	// 创建支持工具调用的 mock Provider
+	provider := New("mock", "unused")
+	req := &schema.Request{
+		RequestID: "req-tool-1",
+		Model:     "mock-gpt",
+		Messages: []schema.Message{
+			{
+				Role:    "user",
+				Content: "请告诉我当前时间",
+			},
+		},
+		Tools: []schema.ToolDefinition{
+			{
+				Name: "current_time",
+			},
+		},
+	}
+
+	resp, err := provider.Chat(context.Background(), req)
+	if err != nil {
+		t.Fatalf("执行带工具的聊天请求失败: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("期望返回 1 个工具调用，实际得到 %d", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "current_time" {
+		t.Fatalf("期望工具名为 current_time，实际得到 %q", resp.ToolCalls[0].Name)
+	}
+}

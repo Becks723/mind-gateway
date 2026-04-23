@@ -51,7 +51,9 @@ governance:
 
 tools:
   enabled: false
-  allowed_tools: []
+  allowed_tools:
+    - current_time
+    - echo
 
 observability:
   log_level: info

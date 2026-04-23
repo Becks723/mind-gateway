@@ -8,6 +8,7 @@ import (
 	"github.com/Becks723/mind-gateway/core/schema"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
+	frameworktool "github.com/Becks723/mind-gateway/framework/tool"
 	"github.com/Becks723/mind-gateway/plugin"
 	governanceplugin "github.com/Becks723/mind-gateway/plugin/governance"
 	logplugin "github.com/Becks723/mind-gateway/plugin/logging"
@@ -36,10 +37,31 @@ func Bootstrap(configPath string) (*Server, error) {
 	// 构建插件执行管线
 	pluginPipeline := buildPluginPipeline(cfg, logger)
 
+	// 构建工具注册表
+	toolRegistry, err := buildToolRegistry(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	// 创建网关核心对象
-	gateway := core.NewGateway(cfg.Gateway, registry, logger, pluginPipeline, cfg.Providers)
+	gateway := core.NewGateway(cfg.Gateway, registry, logger, pluginPipeline, toolRegistry, cfg.Providers)
 
 	return New(cfg, logger, gateway), nil
+}
+
+// buildToolRegistry 根据配置构建工具注册表
+func buildToolRegistry(cfg *frameworkconfig.Config) (*frameworktool.Registry, error) {
+	// 在工具能力关闭时跳过注册
+	if cfg == nil || !cfg.Tools.Enabled {
+		return nil, nil
+	}
+
+	registry := frameworktool.NewRegistry()
+	if err := frameworktool.RegisterBuiltinTools(registry, cfg.Tools.AllowedTools); err != nil {
+		return nil, err
+	}
+
+	return registry, nil
 }
 
 // buildProviderRegistry 根据配置构建 Provider 注册表

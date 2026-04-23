@@ -30,7 +30,7 @@ func TestChatCompletion(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 
@@ -79,7 +79,7 @@ func TestChatCompletionStream(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 
@@ -168,7 +168,7 @@ func TestChatCompletionWithInvalidMessages(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 
@@ -226,7 +226,7 @@ func TestChatCompletionWithVirtualKeyQuota(t *testing.T) {
 	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
 		DefaultProvider: "mock",
 		DefaultModel:    "mock-gpt",
-	}, registry, frameworklogging.NewLogger("error"), plugincore.NewPipeline(governance), nil)
+	}, registry, frameworklogging.NewLogger("error"), plugincore.NewPipeline(governance), nil, nil)
 	logger := frameworklogging.NewLogger("error")
 	router := NewRouter(logger, gateway)
 

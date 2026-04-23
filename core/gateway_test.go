@@ -11,6 +11,7 @@ import (
 	"github.com/Becks723/mind-gateway/core/schema"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
+	frameworktool "github.com/Becks723/mind-gateway/framework/tool"
 	plugincore "github.com/Becks723/mind-gateway/plugin"
 	logplugin "github.com/Becks723/mind-gateway/plugin/logging"
 	"github.com/Becks723/mind-gateway/provider"
@@ -109,7 +110,7 @@ func TestGatewayHandleChat(t *testing.T) {
 		DefaultModel:       "mock-gpt",
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 
 	// 构造聊天请求并执行
 	resp, err := gateway.HandleChat(context.Background(), &schema.Request{
@@ -142,7 +143,7 @@ func TestGatewayHandleChatWithEmptyMessages(t *testing.T) {
 		DefaultModel:       "mock-gpt",
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, provider.NewRegistry(), frameworklogging.NewLogger("error"), nil, nil)
+	}, provider.NewRegistry(), frameworklogging.NewLogger("error"), nil, nil, nil)
 
 	// 执行空消息请求并校验错误
 	if _, err := gateway.HandleChat(context.Background(), &schema.Request{
@@ -166,7 +167,7 @@ func TestGatewayConcurrentHandleChat(t *testing.T) {
 		RequestTimeout:     3 * time.Second,
 		QueueSize:          64,
 		WorkersPerProvider: 4,
-	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 
 	// 并发发起 20 个请求
 	var wg sync.WaitGroup
@@ -218,7 +219,7 @@ func TestGatewayShutdown(t *testing.T) {
 		DefaultModel:       "mock-gpt",
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 
 	// 执行关闭动作并校验结果
 	if err := gateway.Shutdown(context.Background()); err != nil {
@@ -242,7 +243,7 @@ func TestGatewayRetry(t *testing.T) {
 		MaxBackoff:         10 * time.Millisecond,
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 
 	// 执行请求并校验最终成功
 	resp, err := gateway.HandleChat(context.Background(), &schema.Request{
@@ -279,7 +280,7 @@ func TestGatewayFallback(t *testing.T) {
 		MaxRetries:         0,
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil, []frameworkconfig.ProviderConfig{
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, []frameworkconfig.ProviderConfig{
 		{
 			Name:      "primary",
 			Type:      "mock",
@@ -331,7 +332,7 @@ func TestGatewayNonRetryableError(t *testing.T) {
 		MaxRetries:         2,
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, frameworklogging.NewLogger("error"), nil, []frameworkconfig.ProviderConfig{
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, []frameworkconfig.ProviderConfig{
 		{
 			Name:      "fatal",
 			Type:      "mock",
@@ -372,7 +373,7 @@ func TestGatewayWithLoggingPlugin(t *testing.T) {
 		DefaultModel:       "mock-gpt",
 		QueueSize:          8,
 		WorkersPerProvider: 1,
-	}, registry, logger, pipeline, nil)
+	}, registry, logger, pipeline, nil, nil)
 
 	// 执行请求并校验结果
 	resp, err := gateway.HandleChat(context.Background(), &schema.Request{
@@ -389,5 +390,49 @@ func TestGatewayWithLoggingPlugin(t *testing.T) {
 	}
 	if resp == nil || resp.OutputText != "插件执行成功" {
 		t.Fatalf("期望响应输出为 插件执行成功，实际得到 %#v", resp)
+	}
+}
+
+// TestGatewayToolLoop 验证网关可以完成工具循环闭环
+func TestGatewayToolLoop(t *testing.T) {
+	// 创建注册表并注册 mock Provider
+	registry := provider.NewRegistry()
+	if err := registry.Register(mockprovider.New("mock", "unused")); err != nil {
+		t.Fatalf("注册 mock Provider 失败: %v", err)
+	}
+
+	toolRegistry := frameworktool.NewRegistry()
+	if err := frameworktool.RegisterBuiltinTools(toolRegistry, []string{"current_time", "echo"}); err != nil {
+		t.Fatalf("注册内置工具失败: %v", err)
+	}
+
+	gateway := NewGateway(frameworkconfig.GatewayConfig{
+		DefaultProvider:    "mock",
+		DefaultModel:       "mock-gpt",
+		QueueSize:          8,
+		WorkersPerProvider: 1,
+	}, registry, frameworklogging.NewLogger("error"), nil, toolRegistry, nil)
+
+	// 执行请求并校验结果
+	resp, err := gateway.HandleChat(context.Background(), &schema.Request{
+		RequestID: "tool-loop-1",
+		Messages: []schema.Message{
+			{
+				Role:    "user",
+				Content: "请告诉我当前时间",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("执行工具循环请求失败: %v", err)
+	}
+	if resp == nil || resp.OutputText == "" {
+		t.Fatalf("期望工具循环返回最终回答，实际得到 %#v", resp)
+	}
+	if resp.FinishReason != "stop" {
+		t.Fatalf("期望工具循环最终结束原因为 stop，实际得到 %q", resp.FinishReason)
+	}
+	if len(resp.ToolCalls) != 0 {
+		t.Fatalf("期望最终响应不再保留待执行工具调用，实际得到 %#v", resp.ToolCalls)
 	}
 }

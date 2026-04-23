@@ -9,6 +9,7 @@ import (
 	"github.com/Becks723/mind-gateway/core/schema"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
+	frameworktool "github.com/Becks723/mind-gateway/framework/tool"
 	"github.com/Becks723/mind-gateway/plugin"
 	"github.com/Becks723/mind-gateway/provider"
 )
@@ -19,13 +20,15 @@ type Gateway struct {
 	registry          *provider.Registry            // registry 表示 Provider 注册表
 	logger            *frameworklogging.Logger      // logger 表示网关日志记录器
 	pluginPipeline    *plugin.Pipeline              // pluginPipeline 表示插件执行管线
+	toolRegistry      *frameworktool.Registry       // toolRegistry 表示工具注册表
+	toolLoop          *frameworktool.Loop           // toolLoop 表示工具循环执行器
 	queues            map[string]*ProviderQueue     // queues 表示按 Provider 组织的请求队列
 	providerFallbacks map[string][]string           // providerFallbacks 表示每个 Provider 对应的降级链
 	mu                sync.RWMutex                  // mu 表示队列读写锁
 }
 
 // NewGateway 创建新的网关核心对象
-func NewGateway(cfg frameworkconfig.GatewayConfig, registry *provider.Registry, logger *frameworklogging.Logger, pluginPipeline *plugin.Pipeline, providerConfigs []frameworkconfig.ProviderConfig) *Gateway {
+func NewGateway(cfg frameworkconfig.GatewayConfig, registry *provider.Registry, logger *frameworklogging.Logger, pluginPipeline *plugin.Pipeline, toolRegistry *frameworktool.Registry, providerConfigs []frameworkconfig.ProviderConfig) *Gateway {
 	// 创建网关对象并初始化队列
 	finalLogger := logger
 	if finalLogger == nil {
@@ -35,11 +38,17 @@ func NewGateway(cfg frameworkconfig.GatewayConfig, registry *provider.Registry, 
 	if finalPluginPipeline == nil {
 		finalPluginPipeline = plugin.NewPipeline()
 	}
+	var toolLoop *frameworktool.Loop
+	if toolRegistry != nil {
+		toolLoop = frameworktool.NewLoop(toolRegistry, finalLogger, 4)
+	}
 	gateway := &Gateway{
 		config:            cfg,
 		registry:          registry,
 		logger:            finalLogger,
 		pluginPipeline:    finalPluginPipeline,
+		toolRegistry:      toolRegistry,
+		toolLoop:          toolLoop,
 		queues:            make(map[string]*ProviderQueue),
 		providerFallbacks: buildProviderFallbacks(providerConfigs),
 	}
@@ -117,10 +126,20 @@ func (g *Gateway) handleRequestWithPlugins(ctx context.Context, req *schema.Requ
 	}
 
 	// 执行实际的 provider 调度
-	resp, runErr := g.handleProviderAttempt(ctx, finalReq)
+	resp, runErr := g.executeRequest(ctx, finalReq)
 
 	// 执行后置插件钩子
 	return g.runPostHooks(ctx, finalReq, resp, runErr, executedCount)
+}
+
+// executeRequest 执行模型请求或工具循环
+func (g *Gateway) executeRequest(ctx context.Context, req *schema.Request) (*schema.Response, error) {
+	// 在存在工具定义和工具循环执行器时走工具循环
+	if g.toolLoop != nil && len(req.Tools) > 0 {
+		return g.toolLoop.Execute(ctx, req, g.handleProviderAttempt)
+	}
+
+	return g.handleProviderAttempt(ctx, req)
 }
 
 // handleStreamRequestWithPlugins 在建立流式请求前后执行插件钩子
@@ -306,6 +325,9 @@ func (g *Gateway) prepareRequest(req *schema.Request) error {
 	}
 	if req.StartedAt.IsZero() {
 		req.StartedAt = time.Now()
+	}
+	if len(req.Tools) == 0 && g.toolRegistry != nil {
+		req.Tools = g.toolRegistry.Definitions()
 	}
 
 	// 校验请求必要字段
