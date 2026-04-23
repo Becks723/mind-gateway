@@ -9,6 +9,7 @@ import (
 
 	"github.com/Becks723/mind-gateway/core"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
+	frameworkdebug "github.com/Becks723/mind-gateway/framework/debug"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	transporthttp "github.com/Becks723/mind-gateway/transport/http"
 	"github.com/valyala/fasthttp"
@@ -19,6 +20,7 @@ type Server struct {
 	Config          *frameworkconfig.Config  // Config 表示应用配置
 	Logger          *frameworklogging.Logger // Logger 表示结构化日志记录器
 	Gateway         *core.Gateway            // Gateway 表示网关核心执行入口
+	DebugStore      *frameworkdebug.Store    // DebugStore 表示调试请求摘要存储
 	HTTPServer      *fasthttp.Server         // HTTPServer 表示底层 fasthttp 服务实例
 	Addr            string                   // Addr 表示监听地址
 	listener        net.Listener             // listener 表示监听器
@@ -27,7 +29,8 @@ type Server struct {
 
 // New 创建新的 HTTP 传输层服务
 func New(cfg *frameworkconfig.Config, logger *frameworklogging.Logger, gateway *core.Gateway) *Server {
-	handler := transporthttp.NewRouter(logger, gateway)
+	debugStore := frameworkdebug.NewStore(cfg.Observability.KeepRecentRequests)
+	handler := transporthttp.NewRouter(logger, gateway, debugStore)
 	addr := net.JoinHostPort(cfg.Server.Host, itoa(cfg.Server.Port))
 
 	httpServer := &fasthttp.Server{
@@ -42,6 +45,7 @@ func New(cfg *frameworkconfig.Config, logger *frameworklogging.Logger, gateway *
 		Config:          cfg,
 		Logger:          logger,
 		Gateway:         gateway,
+		DebugStore:      debugStore,
 		HTTPServer:      httpServer,
 		Addr:            addr,
 		shutdownTimeout: cfg.Server.ShutdownTimeout,

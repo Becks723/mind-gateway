@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	frameworkdebug "github.com/Becks723/mind-gateway/framework/debug"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/Becks723/mind-gateway/transport/http/handler"
 	"github.com/google/uuid"
@@ -11,6 +12,14 @@ import (
 )
 
 const requestIDKey = "request_id"
+const debugProviderKey = "debug_provider"
+const debugModelKey = "debug_model"
+const debugRetryCountKey = "debug_retry_count"
+const debugFallbackIndexKey = "debug_fallback_index"
+const debugToolCallCountKey = "debug_tool_call_count"
+const debugVirtualKeyKey = "debug_virtual_key"
+const debugErrorTypeKey = "debug_error_type"
+const debugStreamKey = "debug_stream"
 
 // Middleware 定义 fasthttp 中间件函数类型
 type Middleware func(next fasthttp.RequestHandler) fasthttp.RequestHandler
@@ -58,6 +67,47 @@ func LoggingMiddleware(logger *frameworklogging.Logger) Middleware {
 				"status_code", ctx.Response.StatusCode(),
 				"latency_ms", time.Since(start).Milliseconds(),
 			)
+		}
+	}
+}
+
+// DebugSummaryMiddleware 记录最近请求摘要
+func DebugSummaryMiddleware(store *frameworkdebug.Store) Middleware {
+	return func(next fasthttp.RequestHandler) fasthttp.RequestHandler {
+		return func(ctx *fasthttp.RequestCtx) {
+			// 在调试存储存在时采集请求摘要
+			start := time.Now()
+			next(ctx)
+
+			if store == nil {
+				return
+			}
+
+			requestID, _ := ctx.UserValue(requestIDKey).(string)
+			provider, _ := ctx.UserValue(debugProviderKey).(string)
+			model, _ := ctx.UserValue(debugModelKey).(string)
+			virtualKey, _ := ctx.UserValue(debugVirtualKeyKey).(string)
+			errorType, _ := ctx.UserValue(debugErrorTypeKey).(string)
+			retryCount, _ := ctx.UserValue(debugRetryCountKey).(int)
+			fallbackIndex, _ := ctx.UserValue(debugFallbackIndexKey).(int)
+			toolCallCount, _ := ctx.UserValue(debugToolCallCountKey).(int)
+			stream, _ := ctx.UserValue(debugStreamKey).(bool)
+
+			store.Add(frameworkdebug.RequestSummary{
+				RequestID:     requestID,
+				Method:        string(ctx.Method()),
+				Path:          string(ctx.Path()),
+				StatusCode:    ctx.Response.StatusCode(),
+				LatencyMS:     time.Since(start).Milliseconds(),
+				Provider:      provider,
+				Model:         model,
+				RetryCount:    retryCount,
+				FallbackIndex: fallbackIndex,
+				ToolCallCount: toolCallCount,
+				VirtualKey:    virtualKey,
+				ErrorType:     errorType,
+				Stream:        stream,
+			})
 		}
 	}
 }

@@ -54,6 +54,8 @@ func ChatCompletion(gateway ChatGateway) fasthttp.RequestHandler {
 			VirtualKey:  virtualKeyFromContext(ctx),
 			StartedAt:   time.Now(),
 		}
+		ctx.SetUserValue("debug_virtual_key", internalReq.VirtualKey)
+		ctx.SetUserValue("debug_stream", internalReq.Stream)
 
 		// 调用网关核心执行链路
 		if internalReq.Stream {
@@ -64,9 +66,11 @@ func ChatCompletion(gateway ChatGateway) fasthttp.RequestHandler {
 		// 调用网关核心执行链路
 		resp, err := gateway.HandleChat(ctx, internalReq)
 		if err != nil {
+			ctx.SetUserValue("debug_error_type", classifyRunError(err))
 			WriteErrorFrom(ctx, err)
 			return
 		}
+		storeChatDebugValues(ctx, internalReq, resp)
 
 		// 转换为 OpenAI-compatible 响应
 		responseBody := openai.ChatCompletionResponse{
@@ -130,6 +134,7 @@ func handleStreamingChatCompletion(ctx *fasthttp.RequestCtx, gateway ChatGateway
 				}
 
 				if event.Done {
+					storeStreamDebugValues(ctx, req, event)
 					_, _ = writer.WriteString("data: [DONE]\n\n")
 					_ = writer.Flush()
 					continue
@@ -148,6 +153,7 @@ func handleStreamingChatCompletion(ctx *fasthttp.RequestCtx, gateway ChatGateway
 					continue
 				}
 				if streamErr != nil {
+					ctx.SetUserValue("debug_error_type", classifyRunError(streamErr))
 					writeStreamError(writer, streamErr)
 					return
 				}
@@ -200,6 +206,62 @@ func writeStreamError(writer *bufio.Writer, err error) {
 	_, _ = writer.WriteString("data: " + string(body) + "\n\n")
 	_, _ = writer.WriteString("data: [DONE]\n\n")
 	_ = writer.Flush()
+}
+
+// storeChatDebugValues 写入非流式请求摘要字段
+func storeChatDebugValues(ctx *fasthttp.RequestCtx, req *schema.Request, resp *schema.Response) {
+	// 将调试摘要所需字段写入请求上下文
+	if ctx == nil || req == nil || resp == nil {
+		return
+	}
+
+	ctx.SetUserValue("debug_provider", resp.Provider)
+	ctx.SetUserValue("debug_model", resp.Model)
+	ctx.SetUserValue("debug_retry_count", req.RetryCount)
+	ctx.SetUserValue("debug_fallback_index", req.FallbackIndex)
+	ctx.SetUserValue("debug_tool_call_count", countToolCalls(req.Messages)+len(resp.ToolCalls))
+}
+
+// storeStreamDebugValues 写入流式请求摘要字段
+func storeStreamDebugValues(ctx *fasthttp.RequestCtx, req *schema.Request, event schema.StreamEvent) {
+	// 在流式结束事件到达时写入最终调试字段
+	if ctx == nil || req == nil {
+		return
+	}
+
+	ctx.SetUserValue("debug_provider", event.Provider)
+	ctx.SetUserValue("debug_model", event.Model)
+	ctx.SetUserValue("debug_retry_count", req.RetryCount)
+	ctx.SetUserValue("debug_fallback_index", req.FallbackIndex)
+	ctx.SetUserValue("debug_tool_call_count", countToolCalls(req.Messages))
+}
+
+// classifyRunError 解析运行时错误类型
+func classifyRunError(err error) string {
+	// 处理空错误
+	if err == nil {
+		return ""
+	}
+
+	type errorTypeProvider interface {
+		ErrorType() string
+	}
+
+	provider, ok := err.(errorTypeProvider)
+	if ok {
+		return provider.ErrorType()
+	}
+
+	return schema.ErrorTypeInternal
+}
+
+// countToolCalls 统计消息列表中的工具调用数量
+func countToolCalls(messages []schema.Message) int {
+	count := 0
+	for _, message := range messages {
+		count += len(message.ToolCalls)
+	}
+	return count
 }
 
 // toCoreMessages 将外部消息结构转换为内部消息结构

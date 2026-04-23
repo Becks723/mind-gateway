@@ -116,6 +116,8 @@ func statusToErrorType(statusCode int) string {
 		return schema.ErrorTypeMethodNotAllowed
 	case fasthttp.StatusBadRequest:
 		return schema.ErrorTypeInvalidRequest
+	case fasthttp.StatusServiceUnavailable:
+		return schema.ErrorTypeInternal
 	case fasthttp.StatusTooManyRequests:
 		return schema.ErrorTypeRateLimit
 	default:

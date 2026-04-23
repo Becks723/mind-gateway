@@ -11,6 +11,7 @@ import (
 
 	"github.com/Becks723/mind-gateway/core"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
+	frameworkdebug "github.com/Becks723/mind-gateway/framework/debug"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	plugincore "github.com/Becks723/mind-gateway/plugin"
 	governanceplugin "github.com/Becks723/mind-gateway/plugin/governance"
@@ -32,7 +33,7 @@ func TestChatCompletion(t *testing.T) {
 		DefaultModel:    "mock-gpt",
 	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 	logger := frameworklogging.NewLogger("error")
-	router := NewRouter(logger, gateway)
+	router := NewRouter(logger, gateway, frameworkdebug.NewStore(20))
 
 	ln := fasthttputil.NewInmemoryListener()
 	defer ln.Close()
@@ -81,7 +82,7 @@ func TestChatCompletionStream(t *testing.T) {
 		DefaultModel:    "mock-gpt",
 	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 	logger := frameworklogging.NewLogger("error")
-	router := NewRouter(logger, gateway)
+	router := NewRouter(logger, gateway, frameworkdebug.NewStore(20))
 
 	ln := fasthttputil.NewInmemoryListener()
 	defer ln.Close()
@@ -170,7 +171,7 @@ func TestChatCompletionWithInvalidMessages(t *testing.T) {
 		DefaultModel:    "mock-gpt",
 	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
 	logger := frameworklogging.NewLogger("error")
-	router := NewRouter(logger, gateway)
+	router := NewRouter(logger, gateway, frameworkdebug.NewStore(20))
 
 	ln := fasthttputil.NewInmemoryListener()
 	defer ln.Close()
@@ -228,7 +229,7 @@ func TestChatCompletionWithVirtualKeyQuota(t *testing.T) {
 		DefaultModel:    "mock-gpt",
 	}, registry, frameworklogging.NewLogger("error"), plugincore.NewPipeline(governance), nil, nil)
 	logger := frameworklogging.NewLogger("error")
-	router := NewRouter(logger, gateway)
+	router := NewRouter(logger, gateway, frameworkdebug.NewStore(20))
 
 	ln := fasthttputil.NewInmemoryListener()
 	defer ln.Close()
@@ -261,6 +262,72 @@ func TestChatCompletionWithVirtualKeyQuota(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "请求次数已超限") {
 		t.Fatalf("期望响应体包含额度超限提示，实际得到 %q", string(body))
+	}
+}
+
+// TestDebugRequestsEndpoint 验证调试接口可以返回最近请求摘要
+func TestDebugRequestsEndpoint(t *testing.T) {
+	// 创建最小网关与测试路由
+	registry := provider.NewRegistry()
+	if err := registry.Register(mockprovider.New("mock", "你好，我是 mock")); err != nil {
+		t.Fatalf("注册 mock Provider 失败: %v", err)
+	}
+	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-gpt",
+	}, registry, frameworklogging.NewLogger("error"), nil, nil, nil)
+	logger := frameworklogging.NewLogger("error")
+	debugStore := frameworkdebug.NewStore(20)
+	router := NewRouter(logger, gateway, debugStore)
+
+	ln := fasthttputil.NewInmemoryListener()
+	defer ln.Close()
+
+	server := &fasthttp.Server{
+		Handler: router,
+	}
+	go func() {
+		_ = server.Serve(ln)
+	}()
+
+	// 先发起一条普通聊天请求，生成调试摘要
+	firstResponse := sendChatCompletionRequest(t, ln, `{"model":"mock-gpt","messages":[{"role":"user","content":"你好"}]}`, "")
+	if firstResponse.StatusCode != http.StatusOK {
+		t.Fatalf("期望聊天请求状态码为 200，实际得到 %d", firstResponse.StatusCode)
+	}
+	_ = firstResponse.Body.Close()
+
+	// 再读取调试接口
+	conn, err := ln.Dial()
+	if err != nil {
+		t.Fatalf("创建调试接口连接失败: %v", err)
+	}
+	defer conn.Close()
+
+	request := "GET /debug/requests HTTP/1.1\r\nHost: example\r\n\r\n"
+	if _, err := conn.Write([]byte(request)); err != nil {
+		t.Fatalf("发送调试接口请求失败: %v", err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("读取调试接口响应失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("期望调试接口状态码为 200，实际得到 %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取调试接口响应体失败: %v", err)
+	}
+	if !strings.Contains(string(body), "\"requests\"") {
+		t.Fatalf("期望调试接口响应包含 requests 字段，实际得到 %q", string(body))
+	}
+	if !strings.Contains(string(body), "/v1/chat/completions") {
+		t.Fatalf("期望调试接口响应包含聊天请求路径，实际得到 %q", string(body))
 	}
 }
 

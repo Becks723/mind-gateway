@@ -2,19 +2,22 @@ package http
 
 import (
 	"github.com/Becks723/mind-gateway/core"
+	frameworkdebug "github.com/Becks723/mind-gateway/framework/debug"
 	frameworklogging "github.com/Becks723/mind-gateway/framework/logging"
 	"github.com/Becks723/mind-gateway/transport/http/handler"
 	"github.com/valyala/fasthttp"
 )
 
 // NewRouter 创建并注册 HTTP 路由
-func NewRouter(logger *frameworklogging.Logger, gateway *core.Gateway) fasthttp.RequestHandler {
+func NewRouter(logger *frameworklogging.Logger, gateway *core.Gateway, debugStore *frameworkdebug.Store) fasthttp.RequestHandler {
 	// 构造核心路由处理函数
 	router := func(ctx *fasthttp.RequestCtx) {
 		// 根据请求路径和方法分发到具体处理函数
 		switch string(ctx.Path()) {
 		case "/healthz":
 			handler.Health(ctx)
+		case "/debug/requests":
+			handler.DebugRequests(debugStore)(ctx)
 		case "/v1/chat/completions":
 			handler.ChatCompletion(gateway)(ctx)
 		default:
@@ -27,6 +30,7 @@ func NewRouter(logger *frameworklogging.Logger, gateway *core.Gateway) fasthttp.
 		router,
 		RequestIDMiddleware(),
 		RecoverMiddleware(logger),
+		DebugSummaryMiddleware(debugStore),
 		LoggingMiddleware(logger),
 	)
 }
