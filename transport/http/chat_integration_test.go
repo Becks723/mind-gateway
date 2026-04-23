@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Becks723/mind-gateway/core"
 	frameworkconfig "github.com/Becks723/mind-gateway/framework/config"
@@ -65,6 +66,95 @@ func TestChatCompletion(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("期望状态码为 200，实际得到 %d", resp.StatusCode)
+	}
+}
+
+// TestChatCompletionStream 验证聊天补全接口可以返回 SSE 流式响应
+func TestChatCompletionStream(t *testing.T) {
+	// 创建最小网关与测试路由
+	registry := provider.NewRegistry()
+	if err := registry.Register(mockprovider.New("mock", "hello from mock provider")); err != nil {
+		t.Fatalf("注册 mock Provider 失败: %v", err)
+	}
+	gateway := core.NewGateway(frameworkconfig.GatewayConfig{
+		DefaultProvider: "mock",
+		DefaultModel:    "mock-gpt",
+	}, registry, frameworklogging.NewLogger("error"), nil, nil)
+	logger := frameworklogging.NewLogger("error")
+	router := NewRouter(logger, gateway)
+
+	ln := fasthttputil.NewInmemoryListener()
+	defer ln.Close()
+
+	server := &fasthttp.Server{
+		Handler: router,
+	}
+	go func() {
+		_ = server.Serve(ln)
+	}()
+
+	// 建立流式请求连接
+	conn, err := ln.Dial()
+	if err != nil {
+		t.Fatalf("创建测试连接失败: %v", err)
+	}
+	defer conn.Close()
+
+	body := `{"model":"mock-gpt","stream":true,"messages":[{"role":"user","content":"你好"}]}`
+	request := "POST /v1/chat/completions HTTP/1.1\r\nHost: example\r\nContent-Type: application/json\r\nContent-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
+	if _, err := conn.Write([]byte(request)); err != nil {
+		t.Fatalf("发送流式测试请求失败: %v", err)
+	}
+
+	// 读取响应头
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("读取流式测试响应失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("期望流式状态码为 200，实际得到 %d", resp.StatusCode)
+	}
+	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("期望 Content-Type 为 text/event-stream，实际得到 %q", resp.Header.Get("Content-Type"))
+	}
+
+	// 汇总 SSE 事件
+	reader := bufio.NewScanner(resp.Body)
+	dataLines := make([]string, 0, 8)
+	doneSeen := false
+	timeout := time.After(2 * time.Second)
+	for !doneSeen {
+		select {
+		case <-timeout:
+			t.Fatal("等待流式响应超时")
+		default:
+		}
+
+		if !reader.Scan() {
+			break
+		}
+		line := strings.TrimSpace(reader.Text())
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+		if payload == "[DONE]" {
+			doneSeen = true
+			continue
+		}
+		dataLines = append(dataLines, payload)
+	}
+
+	if err := reader.Err(); err != nil {
+		t.Fatalf("读取 SSE 流失败: %v", err)
+	}
+	if len(dataLines) < 4 {
+		t.Fatalf("期望至少收到 4 个 SSE chunk，实际得到 %d", len(dataLines))
+	}
+	if !doneSeen {
+		t.Fatal("期望收到 [DONE] 结束事件")
 	}
 }
 

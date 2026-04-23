@@ -24,7 +24,11 @@ type Response struct {
 
 // StreamEvent 定义流式返回的单个事件
 type StreamEvent struct {
-	RequestID string `json:"request_id"` // RequestID 表示请求唯一标识
-	Delta     string `json:"delta"`      // Delta 表示本次流式增量内容
-	Done      bool   `json:"done"`       // Done 表示流是否结束
+	RequestID    string `json:"request_id"`              // RequestID 表示请求唯一标识
+	Provider     string `json:"provider,omitempty"`      // Provider 表示实际执行的 Provider 名称
+	Model        string `json:"model,omitempty"`         // Model 表示实际执行的模型名称
+	Delta        string `json:"delta"`                   // Delta 表示本次流式增量内容
+	Done         bool   `json:"done"`                    // Done 表示流是否结束
+	FinishReason string `json:"finish_reason,omitempty"` // FinishReason 表示流式结束原因
+	Usage        *Usage `json:"usage,omitempty"`         // Usage 表示可选的累计 Token 使用量
 }

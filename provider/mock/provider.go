@@ -3,6 +3,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Becks723/mind-gateway/core/schema"
@@ -93,7 +94,8 @@ func (p *Provider) Chat(ctx context.Context, req *schema.Request) (*schema.Respo
 // ChatStream 执行流式聊天请求
 func (p *Provider) ChatStream(ctx context.Context, req *schema.Request) (<-chan schema.StreamEvent, <-chan error) {
 	// 创建流式事件通道和错误通道
-	eventCh := make(chan schema.StreamEvent, 2)
+	chunks := splitStreamChunks(p.responseText)
+	eventCh := make(chan schema.StreamEvent, len(chunks)+1)
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -114,18 +116,71 @@ func (p *Provider) ChatStream(ctx context.Context, req *schema.Request) (<-chan 
 			return
 		}
 
-		// 发送一段内容事件和结束事件
-		eventCh <- schema.StreamEvent{
-			RequestID: req.RequestID,
-			Delta:     p.responseText,
-			Done:      false,
+		// 逐段发送流式内容事件
+		for _, chunk := range chunks {
+			select {
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			default:
+			}
+
+			eventCh <- schema.StreamEvent{
+				RequestID: req.RequestID,
+				Provider:  p.name,
+				Model:     req.Model,
+				Delta:     chunk,
+				Done:      false,
+			}
 		}
+
+		// 发送结束事件
 		eventCh <- schema.StreamEvent{
-			RequestID: req.RequestID,
-			Delta:     "",
-			Done:      true,
+			RequestID:    req.RequestID,
+			Provider:     p.name,
+			Model:        req.Model,
+			Delta:        "",
+			Done:         true,
+			FinishReason: "stop",
+			Usage: &schema.Usage{
+				InputTokens:  int64(len(req.Messages)),
+				OutputTokens: int64(len(chunks)),
+				TotalTokens:  int64(len(req.Messages)) + int64(len(chunks)),
+			},
 		}
 	}()
 
 	return eventCh, errCh
+}
+
+// splitStreamChunks 将固定文本拆成多个流式片段
+func splitStreamChunks(text string) []string {
+	// 对空文本返回单个空片段
+	if text == "" {
+		return []string{""}
+	}
+
+	// 优先按空格切分，保证 mock 流式演示有多个 chunk
+	parts := strings.Fields(text)
+	if len(parts) >= 2 {
+		return parts
+	}
+
+	// 对单词或中文文本按 rune 分片
+	runes := []rune(text)
+	chunkSize := 2
+	if len(runes) > 10 {
+		chunkSize = 3
+	}
+
+	result := make([]string, 0, (len(runes)+chunkSize-1)/chunkSize)
+	for index := 0; index < len(runes); index += chunkSize {
+		end := index + chunkSize
+		if end > len(runes) {
+			end = len(runes)
+		}
+		result = append(result, string(runes[index:end]))
+	}
+
+	return result
 }

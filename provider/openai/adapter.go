@@ -64,3 +64,34 @@ func ToSchemaResponse(requestID string, providerName string, resp *ChatCompletio
 		},
 	}
 }
+
+// ToSchemaStreamEvent 将 OpenAI 流式响应转换为内部统一流式事件
+func ToSchemaStreamEvent(requestID string, providerName string, resp *ChatCompletionChunkResponse) *schema.StreamEvent {
+	// 处理空响应
+	if resp == nil {
+		return nil
+	}
+
+	event := &schema.StreamEvent{
+		RequestID: requestID,
+		Provider:  providerName,
+		Model:     resp.Model,
+	}
+
+	// 提取首个候选的增量内容
+	if len(resp.Choices) > 0 {
+		event.Delta = resp.Choices[0].Delta.Content
+		event.FinishReason = resp.Choices[0].FinishReason
+	}
+
+	// 提取可选使用量
+	if resp.Usage != nil {
+		event.Usage = &schema.Usage{
+			InputTokens:  resp.Usage.PromptTokens,
+			OutputTokens: resp.Usage.CompletionTokens,
+			TotalTokens:  resp.Usage.TotalTokens,
+		}
+	}
+
+	return event
+}

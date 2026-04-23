@@ -49,22 +49,8 @@ func NewGateway(cfg frameworkconfig.GatewayConfig, registry *provider.Registry, 
 
 // HandleChat 处理非流式聊天请求
 func (g *Gateway) HandleChat(ctx context.Context, req *schema.Request) (*schema.Response, error) {
-	// 补齐请求基础字段
-	if req == nil {
-		return nil, fmt.Errorf("请求不能为空")
-	}
-	if req.Model == "" {
-		req.Model = g.config.DefaultModel
-	}
-	if req.Provider == "" {
-		req.Provider = g.config.DefaultProvider
-	}
-	if req.StartedAt.IsZero() {
-		req.StartedAt = time.Now()
-	}
-
-	// 校验请求必要字段
-	if err := validateRequest(req); err != nil {
+	// 准备请求基础字段
+	if err := g.prepareRequest(req); err != nil {
 		return nil, err
 	}
 
@@ -93,6 +79,32 @@ func (g *Gateway) HandleChat(ctx context.Context, req *schema.Request) (*schema.
 	return nil, fmt.Errorf("请求执行失败")
 }
 
+// HandleChatStream 处理流式聊天请求
+func (g *Gateway) HandleChatStream(ctx context.Context, req *schema.Request) (<-chan schema.StreamEvent, <-chan error, error) {
+	// 准备请求基础字段
+	if err := g.prepareRequest(req); err != nil {
+		return nil, nil, err
+	}
+
+	// 按主 Provider 和 fallback 顺序尝试建立流式请求
+	providerChain := g.resolveProviderChain(req.Provider)
+	for fallbackIndex, providerName := range providerChain {
+		attemptReq := CloneRequest(req)
+		attemptReq.Provider = providerName
+		attemptReq.FallbackIndex = fallbackIndex
+
+		eventCh, errCh, err := g.handleStreamRequestWithPlugins(ctx, attemptReq)
+		if err == nil {
+			return eventCh, errCh, nil
+		}
+		if !g.shouldTryFallback(err) {
+			return nil, nil, err
+		}
+	}
+
+	return nil, nil, fmt.Errorf("流式请求执行失败")
+}
+
 // handleRequestWithPlugins 在调度请求前后执行插件钩子
 func (g *Gateway) handleRequestWithPlugins(ctx context.Context, req *schema.Request) (*schema.Response, error) {
 	// 执行前置插件钩子
@@ -109,6 +121,29 @@ func (g *Gateway) handleRequestWithPlugins(ctx context.Context, req *schema.Requ
 
 	// 执行后置插件钩子
 	return g.runPostHooks(ctx, finalReq, resp, runErr, executedCount)
+}
+
+// handleStreamRequestWithPlugins 在建立流式请求前后执行插件钩子
+func (g *Gateway) handleStreamRequestWithPlugins(ctx context.Context, req *schema.Request) (<-chan schema.StreamEvent, <-chan error, error) {
+	// 执行前置插件钩子
+	finalReq, shortCircuit, executedCount, err := g.runPreHooks(ctx, req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 处理前置短路响应
+	if shortCircuit != nil && shortCircuit.ShortCircuit {
+		return g.buildShortCircuitStream(ctx, finalReq, shortCircuit.Response, executedCount), nil, nil
+	}
+
+	// 建立底层流式请求
+	streamCh, errCh, err := g.handleProviderStreamAttempt(ctx, finalReq)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 包装统一流式输出和后置钩子执行
+	return g.wrapStreamWithPostHooks(ctx, finalReq, streamCh, errCh, executedCount), nil, nil
 }
 
 // bootstrapQueues 为已注册的 Provider 初始化队列和 worker
@@ -255,6 +290,198 @@ func (g *Gateway) executeWithRetry(ctx context.Context, providerName string, req
 	}
 
 	return nil, lastErr
+}
+
+// prepareRequest 补齐请求默认值并校验必要字段
+func (g *Gateway) prepareRequest(req *schema.Request) error {
+	// 补齐请求基础字段
+	if req == nil {
+		return fmt.Errorf("请求不能为空")
+	}
+	if req.Model == "" {
+		req.Model = g.config.DefaultModel
+	}
+	if req.Provider == "" {
+		req.Provider = g.config.DefaultProvider
+	}
+	if req.StartedAt.IsZero() {
+		req.StartedAt = time.Now()
+	}
+
+	// 校验请求必要字段
+	return validateRequest(req)
+}
+
+// handleProviderStreamAttempt 建立单个 Provider 的流式请求
+func (g *Gateway) handleProviderStreamAttempt(ctx context.Context, req *schema.Request) (<-chan schema.StreamEvent, <-chan error, error) {
+	// 获取目标 Provider
+	targetProvider, err := g.registry.MustGet(req.Provider)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	runCtx, cancel := g.withTimeout(ctx)
+	streamCh, errCh := targetProvider.ChatStream(runCtx, req)
+	if streamCh == nil {
+		cancel()
+		return nil, nil, fmt.Errorf("provider %q 返回了空流式通道", req.Provider)
+	}
+
+	wrappedErrCh := make(chan error, 1)
+	go func() {
+		defer close(wrappedErrCh)
+		defer cancel()
+
+		if errCh == nil {
+			return
+		}
+		for err := range errCh {
+			if err == nil {
+				continue
+			}
+			wrappedErrCh <- err
+			return
+		}
+	}()
+
+	return streamCh, wrappedErrCh, nil
+}
+
+// buildShortCircuitStream 构造前置短路的流式输出
+func (g *Gateway) buildShortCircuitStream(ctx context.Context, req *schema.Request, resp *schema.Response, executedCount int) <-chan schema.StreamEvent {
+	// 创建单次输出的短路流
+	eventCh := make(chan schema.StreamEvent, 2)
+	go func() {
+		defer close(eventCh)
+
+		finalResp := resp
+		if finalResp == nil {
+			finalResp = &schema.Response{
+				RequestID:    req.RequestID,
+				Provider:     req.Provider,
+				Model:        req.Model,
+				FinishReason: "stop",
+			}
+		}
+		if finalResp.RequestID == "" {
+			finalResp.RequestID = req.RequestID
+		}
+		if finalResp.Provider == "" {
+			finalResp.Provider = req.Provider
+		}
+		if finalResp.Model == "" {
+			finalResp.Model = req.Model
+		}
+		finalResp.Latency = time.Since(req.StartedAt)
+
+		processedResp, postErr := g.runPostHooks(ctx, req, finalResp, nil, executedCount)
+		if postErr != nil || processedResp == nil {
+			return
+		}
+
+		eventCh <- schema.StreamEvent{
+			RequestID: processedResp.RequestID,
+			Provider:  processedResp.Provider,
+			Model:     processedResp.Model,
+			Delta:     processedResp.OutputText,
+			Done:      false,
+		}
+		eventCh <- schema.StreamEvent{
+			RequestID:    processedResp.RequestID,
+			Provider:     processedResp.Provider,
+			Model:        processedResp.Model,
+			Done:         true,
+			FinishReason: processedResp.FinishReason,
+			Usage:        &processedResp.Usage,
+		}
+	}()
+
+	return eventCh
+}
+
+// wrapStreamWithPostHooks 包装流式结果并在结束时执行后置钩子
+func (g *Gateway) wrapStreamWithPostHooks(ctx context.Context, req *schema.Request, streamCh <-chan schema.StreamEvent, errCh <-chan error, executedCount int) <-chan schema.StreamEvent {
+	// 创建统一输出通道
+	outputCh := make(chan schema.StreamEvent, 8)
+	go func() {
+		defer close(outputCh)
+
+		// 累积最终响应内容
+		finalResp := &schema.Response{
+			RequestID: req.RequestID,
+			Provider:  req.Provider,
+			Model:     req.Model,
+		}
+		var finalErr error
+		sawDoneEvent := false
+
+		for streamCh != nil || errCh != nil {
+			select {
+			case event, ok := <-streamCh:
+				if !ok {
+					streamCh = nil
+					continue
+				}
+
+				// 累积流式内容
+				if event.Provider == "" {
+					event.Provider = req.Provider
+				}
+				if event.Model == "" {
+					event.Model = req.Model
+				}
+				if event.RequestID == "" {
+					event.RequestID = req.RequestID
+				}
+				if event.Delta != "" {
+					finalResp.OutputText += event.Delta
+				}
+				if event.Done {
+					sawDoneEvent = true
+				}
+				if event.FinishReason != "" {
+					finalResp.FinishReason = event.FinishReason
+				}
+				if event.Usage != nil {
+					finalResp.Usage = *event.Usage
+				}
+
+				outputCh <- event
+			case err, ok := <-errCh:
+				if !ok {
+					errCh = nil
+					continue
+				}
+				if err != nil {
+					finalErr = err
+				}
+			}
+		}
+
+		// 处理流结束时的后置钩子
+		finalResp.Latency = time.Since(req.StartedAt)
+		if finalResp.FinishReason == "" && finalErr == nil {
+			finalResp.FinishReason = "stop"
+		}
+		processedResp, postErr := g.runPostHooks(ctx, req, finalResp, finalErr, executedCount)
+		if postErr != nil || processedResp == nil {
+			return
+		}
+
+		// 当上游未主动发送 done 事件时，补一个结束事件
+		if !sawDoneEvent {
+			outputCh <- schema.StreamEvent{
+				RequestID:    processedResp.RequestID,
+				Provider:     processedResp.Provider,
+				Model:        processedResp.Model,
+				Done:         true,
+				FinishReason: processedResp.FinishReason,
+				Usage:        &processedResp.Usage,
+			}
+		}
+	}()
+
+	return outputCh
 }
 
 // enqueue 将请求投递到指定 Provider 队列

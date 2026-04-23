@@ -94,12 +94,72 @@ func (p *Provider) Chat(ctx context.Context, req *schema.Request) (*schema.Respo
 
 // ChatStream 执行流式聊天请求
 func (p *Provider) ChatStream(ctx context.Context, req *schema.Request) (<-chan schema.StreamEvent, <-chan error) {
-	// 当前阶段先返回未实现错误，后续在流式能力阶段补齐
-	eventCh := make(chan schema.StreamEvent)
+	// 创建统一流式事件通道和错误通道
+	eventCh := make(chan schema.StreamEvent, 8)
 	errCh := make(chan error, 1)
-	close(eventCh)
-	errCh <- fmt.Errorf("openai 流式请求暂未实现")
-	close(errCh)
+
+	// 校验输入请求
+	if req == nil {
+		errCh <- fmt.Errorf("请求不能为空")
+		close(eventCh)
+		close(errCh)
+		return eventCh, errCh
+	}
+
+	// 转换模型名称与请求结构
+	model := p.resolveModel(req.Model)
+	openaiReq := ToOpenAIChatCompletionRequest(req)
+	openaiReq.Model = model
+	openaiReq.Stream = true
+
+	// 调用 OpenAI 流式接口并转换为统一事件
+	openaiStream, openaiErrCh := p.client.ChatCompletionStream(ctx, openaiReq)
+	go func() {
+		defer close(eventCh)
+		defer close(errCh)
+
+		for openaiStream != nil || openaiErrCh != nil {
+			select {
+			case chunk, ok := <-openaiStream:
+				if !ok {
+					openaiStream = nil
+					continue
+				}
+
+				// 处理结束信号
+				if chunk != nil && chunk.Object == "chat.completion.chunk" && len(chunk.Choices) == 0 && chunk.Usage == nil {
+					eventCh <- schema.StreamEvent{
+						RequestID:    req.RequestID,
+						Provider:     p.name,
+						Model:        model,
+						Done:         true,
+						FinishReason: "stop",
+					}
+					continue
+				}
+
+				event := ToSchemaStreamEvent(req.RequestID, p.name, chunk)
+				if event == nil {
+					continue
+				}
+				if event.Model == "" {
+					event.Model = model
+				}
+				event.Provider = p.name
+				eventCh <- *event
+			case err, ok := <-openaiErrCh:
+				if !ok {
+					openaiErrCh = nil
+					continue
+				}
+				if err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}
+	}()
+
 	return eventCh, errCh
 }
 
